@@ -1,5 +1,6 @@
 menuconfig MTD
 	tristate "Memory Technology Device (MTD) support"
+	imply NVMEM
 	depends on GENERIC_IO
 	help
 	  Memory Technology Devices are flash, RAM and similar chips, often
