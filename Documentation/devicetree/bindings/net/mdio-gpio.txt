@@ -3,10 +3,19 @@ MDIO on GPIOs
 Currently defined compatibles:
 - virtual,gpio-mdio
 
-MDC and MDIO lines connected to GPIO controllers are listed in the
-gpios property as described in section VIII.1 in the following order:
+MDC, MDIO and optionaly MDO lines connected to GPIO controllers are listed in
+the gpios property as described in section VIII.1 in the following order:
 
-MDC, MDIO.
+MDC, MDIO, MDO (optional)
+
+Optional properties:
+
+- reset-gpios: Must contain a GPIO specifier, referring to the GPIO pin
+  connected to the MDIO reset pin
+- reset-duration : Reset duration in milliseconds.
+- reset-active-high: If present then the reset sequence using the GPIO
+  specified in the "reset-gpios" property is reversed (H=reset state,
+  L=operation state).
 
 Note: Each gpio-mdio bus should have an alias correctly numbered in "aliases"
 node.

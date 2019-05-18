@@ -17,6 +17,7 @@
  * Vitaly Bordug <vbordug@ru.mvista.com>
  */
 
+#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
@@ -28,13 +29,17 @@
 #include <linux/of_mdio.h>
 
 struct mdio_gpio_info {
+	int rst_duration;
+	bool rst_active_high;
 	struct mdiobb_ctrl ctrl;
-	struct gpio_desc *mdc, *mdio, *mdo;
+	struct gpio_desc *mdc, *mdio, *mdo, *reset;
 };
 
 static int mdio_gpio_get_data(struct device *dev,
 			      struct mdio_gpio_info *bitbang)
 {
+	int reset_init;
+
 	bitbang->mdc = devm_gpiod_get_index(dev, NULL, MDIO_GPIO_MDC,
 					    GPIOD_OUT_LOW);
 	if (IS_ERR(bitbang->mdc))
@@ -47,7 +52,23 @@ static int mdio_gpio_get_data(struct device *dev,
 
 	bitbang->mdo = devm_gpiod_get_index_optional(dev, NULL, MDIO_GPIO_MDO,
 						     GPIOD_OUT_LOW);
-	return PTR_ERR_OR_ZERO(bitbang->mdo);
+	if (IS_ERR(bitbang->mdo))
+		return PTR_ERR(bitbang->mdo);
+
+	bitbang->rst_duration = 1;
+	bitbang->rst_active_high = false;
+	of_property_read_u32(dev->of_node, "reset-duration",
+			     &bitbang->rst_duration);
+	bitbang->rst_active_high = of_property_read_bool(dev->of_node,
+							 "reset-active-high");
+
+	reset_init = bitbang->rst_active_high ? GPIOD_OUT_HIGH : GPIOD_OUT_LOW;
+	bitbang->reset = devm_gpiod_get_optional(dev, "reset", reset_init);
+
+	if (IS_ERR(bitbang->reset))
+		dev_info(dev, "reset-gpio is missing\n");
+
+	return PTR_ERR_OR_ZERO(bitbang->reset);
 }
 
 static void mdio_dir(struct mdiobb_ctrl *ctrl, int dir)
@@ -152,6 +173,30 @@ static void mdio_gpio_bus_destroy(struct device *dev)
 	mdio_gpio_bus_deinit(dev);
 }
 
+static void mdio_gpio_reset(struct mdio_gpio_info *bitbang)
+{
+	int msec = bitbang->rst_duration;
+
+	if (!bitbang->reset)
+		return;
+
+	{
+		int val = gpiod_get_value_cansleep(bitbang->reset);
+		pr_info("mdio-gpio: reset-gpio is %s, reset-active-high is %s, setting reset-gpio to %s after %d ms\n",
+			 val ? "HIGH" : "LOW",
+			 bitbang->rst_active_high ? "enabled" : "disabled",
+			 !bitbang->rst_active_high ? "HIGH" : "LOW",
+			 msec);
+	}
+
+	if (msec > 20)
+		msleep(msec);
+	else
+		usleep_range(msec * 1000, msec * 1000 + 1000);
+
+	gpiod_set_value_cansleep(bitbang->reset, !bitbang->rst_active_high);
+}
+
 static int mdio_gpio_probe(struct platform_device *pdev)
 {
 	struct mdio_gpio_info *bitbang;
@@ -165,6 +210,8 @@ static int mdio_gpio_probe(struct platform_device *pdev)
 	ret = mdio_gpio_get_data(&pdev->dev, bitbang);
 	if (ret)
 		return ret;
+
+	mdio_gpio_reset(bitbang);
 
 	if (pdev->dev.of_node) {
 		bus_id = of_alias_get_id(pdev->dev.of_node, "mdio-gpio");
