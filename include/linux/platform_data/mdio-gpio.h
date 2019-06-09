@@ -12,6 +12,7 @@
 #define __LINUX_MDIO_GPIO_H
 
 #include <linux/mdio-bitbang.h>
+#include <linux/gpio/consumer.h>
 
 struct mdio_gpio_platform_data {
 	/* GPIO numbers for bus pins */
@@ -23,11 +24,13 @@ struct mdio_gpio_platform_data {
 	bool mdio_active_low;
 	bool mdo_active_low;
 
+	int rst_duration;
+	bool rst_active_high;
+	struct gpio_desc *reset;
+
 	u32 phy_mask;
 	u32 phy_ignore_ta_mask;
 	int irqs[PHY_MAX_ADDR];
-	/* reset callback */
-	int (*reset)(struct mii_bus *bus);
 };
 
 #endif /* __LINUX_MDIO_GPIO_H */

@@ -20,6 +20,7 @@
  * kind, whether express or implied.
  */
 
+#include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
@@ -41,6 +42,7 @@ static void *mdio_gpio_of_get_data(struct platform_device *pdev)
 	struct mdio_gpio_platform_data *pdata;
 	enum of_gpio_flags flags;
 	int ret;
+	int reset_init;
 
 	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
@@ -65,7 +67,43 @@ static void *mdio_gpio_of_get_data(struct platform_device *pdev)
 		pdata->mdo_active_low = flags & OF_GPIO_ACTIVE_LOW;
 	}
 
+	pdata->rst_duration = 1;
+	pdata->rst_active_high = false;
+	of_property_read_u32(np, "reset-duration",
+			     &pdata->rst_duration);
+	pdata->rst_active_high = of_property_read_bool(np, "reset-active-high");
+
+	reset_init = pdata->rst_active_high ? GPIOD_OUT_HIGH : GPIOD_OUT_LOW;
+	pdata->reset = devm_gpiod_get_optional(&pdev->dev, "reset", reset_init);
+
+	if (IS_ERR(pdata->reset))
+		dev_info(&pdev->dev, "reset-gpio is missing\n");
+
 	return pdata;
+}
+
+static void mdio_gpio_reset(struct mdio_gpio_platform_data *pdata)
+{
+	int msec = pdata->rst_duration;
+
+	if (IS_ERR(pdata->reset))
+		return;
+
+	{
+		int val = gpiod_get_value_cansleep(pdata->reset);
+		pr_info("mdio-gpio: reset-gpio is %s, reset-active-high is %s, setting reset-gpio to %s after %d ms\n",
+			 val ? "HIGH" : "LOW",
+			 pdata->rst_active_high ? "enabled" : "disabled",
+			 !pdata->rst_active_high ? "HIGH" : "LOW",
+			 msec);
+	}
+
+	if (msec > 20)
+		msleep(msec);
+	else
+		usleep_range(msec * 1000, msec * 1000 + 1000);
+
+	gpiod_set_value_cansleep(pdata->reset, !pdata->rst_active_high);
 }
 
 static void mdio_dir(struct mdiobb_ctrl *ctrl, int dir)
@@ -141,7 +179,6 @@ static struct mii_bus *mdio_gpio_bus_init(struct device *dev,
 		goto out;
 
 	bitbang->ctrl.ops = &mdio_gpio_ops;
-	bitbang->ctrl.reset = pdata->reset;
 	mdc = pdata->mdc;
 	bitbang->mdc = gpio_to_desc(mdc);
 	if (pdata->mdc_active_low)
@@ -234,6 +271,8 @@ static int mdio_gpio_probe(struct platform_device *pdev)
 
 	if (!pdata)
 		return -ENODEV;
+
+	mdio_gpio_reset(pdata);
 
 	new_bus = mdio_gpio_bus_init(&pdev->dev, pdata, bus_id);
 	if (!new_bus)
